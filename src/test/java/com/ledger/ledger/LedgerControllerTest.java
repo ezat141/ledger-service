@@ -19,11 +19,38 @@ class LedgerControllerTest {
     MockMvc mockMvc;
 
     @Test
-    void returnsEntriesForAnAuthenticatedCaller() throws Exception {
+    void returnsOnlyTheCallersOwnTenantsEntries() throws Exception {
         mockMvc.perform(get("/ledger/entries")
                         .with(jwt().jwt(jwt -> jwt.subject("ezzat").claim("tenant", "acme"))))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(3))
-                .andExpect(jsonPath("$[0].reference").value("LDG-1001"));
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].reference").value("LDG-1001"))
+                .andExpect(jsonPath("$[0].tenant").value("acme"))
+                .andExpect(jsonPath("$[0].amount").value(250.00))
+                .andExpect(jsonPath("$[0].currency").value("EGP"))
+                .andExpect(jsonPath("$[1].reference").value("LDG-1002"));
+    }
+
+    /** The same endpoint, a different tenant, a disjoint result — isolation in both directions. */
+    @Test
+    void aDifferentTenantSeesADifferentSetEntirely() throws Exception {
+        mockMvc.perform(get("/ledger/entries")
+                        .with(jwt().jwt(jwt -> jwt.subject("alice").claim("tenant", "default"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].reference").value("LDG-1003"))
+                .andExpect(jsonPath("$[0].tenant").value("default"));
+    }
+
+    /**
+     * A client-credentials token has no user and so no tenant claim. It must see nothing
+     * rather than everything — the failure mode here should be empty, not total exposure.
+     */
+    @Test
+    void aTokenWithNoTenantClaimSeesNothing() throws Exception {
+        mockMvc.perform(get("/ledger/entries")
+                        .with(jwt().jwt(jwt -> jwt.subject("authcore-machine"))))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
     }
 }

@@ -1,5 +1,7 @@
 package com.ledger.ledger;
 
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -17,7 +19,7 @@ public class LedgerController {
     }
 
     @GetMapping("/entries")
-    public List<LedgerEntry> entries() {
-        return repository.findAll();
+    public List<LedgerEntry> entries(@AuthenticationPrincipal Jwt jwt) {
+        return repository.findByTenant(jwt.getClaimAsString("tenant"));
     }
 }
