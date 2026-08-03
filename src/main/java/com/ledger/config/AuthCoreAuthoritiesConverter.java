@@ -10,6 +10,19 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
+/**
+ * Turns the three authorization claims into authorities.
+ *
+ * <p>Spring's default converter reads {@code scope} only. That is enough for a client
+ * asking "may I call this API?", but {@code @PreAuthorize("hasAuthority('payments:write')")}
+ * and {@code hasRole('ADMIN')} are asking about the user, whose capabilities ride in the
+ * {@code roles} and {@code permissions} claims that AuthCore writes into the token. Without
+ * this converter those claims would be visible in the token but unenforced — decoration
+ * rather than authorization.
+ *
+ * <p>All three are kept, not merged: scope stays the client's delegated ceiling, while
+ * roles and permissions describe the user. A request is only permitted when both agree.
+ */
 public class AuthCoreAuthoritiesConverter implements Converter<Jwt, Collection<GrantedAuthority>> {
 
     @Override
