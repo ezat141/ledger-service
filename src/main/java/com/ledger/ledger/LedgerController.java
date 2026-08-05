@@ -87,9 +87,8 @@ public class LedgerController {
                 jwt.getClaimAsString("tenant"),
                 tokenPermissions == null ? List.of() : tokenPermissions);
 
-        WhoAmI.Identity fromHeaders = (headerSubject == null && headerTenant == null)
-                ? WhoAmI.Identity.EMPTY
-                : new WhoAmI.Identity(headerSubject, headerTenant, splitPermissions(headerPermissions));
+        WhoAmI.Identity fromHeaders = new WhoAmI.Identity(
+                headerSubject, headerTenant, splitPermissions(headerPermissions));
 
         return WhoAmI.of(fromToken, fromHeaders);
     }

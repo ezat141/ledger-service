@@ -28,6 +28,7 @@ class WhoAmITest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.fromToken.subject").value("ezzat"))
                 .andExpect(jsonPath("$.fromToken.tenant").value("acme"))
+                .andExpect(jsonPath("$.fromToken.empty").doesNotExist())
                 .andExpect(jsonPath("$.fromHeaders.subject").doesNotExist())
                 .andExpect(jsonPath("$.match").value(false));
     }
@@ -83,5 +84,64 @@ class WhoAmITest {
                         .header("X-GK-Tenant", "default")
                         .header("X-GK-Permissions", "payments:write"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    /**
+     * The forged-privilege case. Headers claiming authority the token does not grant must
+     * read as a mismatch — this endpoint exists to make exactly that visible, so agreeing
+     * here would teach the opposite of the intended lesson.
+     */
+    @Test
+    void reportsAMismatchWhenHeadersClaimPermissionsTheTokenDoesNot() throws Exception {
+        mockMvc.perform(get("/ledger/whoami")
+                        .with(jwt().jwt(jwt -> jwt.subject("ezzat")
+                                  .claim("tenant", "acme")
+                                  .claim("permissions", java.util.List.of("payments:read"))))
+                        .header("X-GK-Subject", "ezzat")
+                        .header("X-GK-Tenant", "acme")
+                        .header("X-GK-Permissions", "payments:read,payments:write,admin:all"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.fromToken.permissions.length()").value(1))
+                .andExpect(jsonPath("$.fromHeaders.permissions.length()").value(3))
+                .andExpect(jsonPath("$.match").value(false));
+    }
+
+    /** The same permissions in a different order are the same identity. */
+    @Test
+    void permissionOrderDoesNotAffectTheComparison() throws Exception {
+        mockMvc.perform(get("/ledger/whoami")
+                        .with(jwt().jwt(jwt -> jwt.subject("ezzat")
+                                  .claim("tenant", "acme")
+                                  .claim("permissions", java.util.List.of("payments:read", "accounts:read"))))
+                        .header("X-GK-Subject", "ezzat")
+                        .header("X-GK-Tenant", "acme")
+                        .header("X-GK-Permissions", "accounts:read,payments:read"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.match").value(true));
+    }
+
+    /** Whitespace and stray separators are tolerated; empty entries are dropped. */
+    @Test
+    void parsesAMessyPermissionsHeader() throws Exception {
+        mockMvc.perform(get("/ledger/whoami")
+                        .with(jwt().jwt(jwt -> jwt.subject("ezzat").claim("tenant", "acme")))
+                        .header("X-GK-Subject", "ezzat")
+                        .header("X-GK-Tenant", "acme")
+                        .header("X-GK-Permissions", "  payments:read , , accounts:read  "))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.fromHeaders.permissions.length()").value(2))
+                .andExpect(jsonPath("$.fromHeaders.permissions[0]").value("payments:read"))
+                .andExpect(jsonPath("$.fromHeaders.permissions[1]").value("accounts:read"));
+    }
+
+    /** A permissions header on its own must not be silently dropped. */
+    @Test
+    void keepsPermissionsWhenNoOtherIdentityHeaderArrives() throws Exception {
+        mockMvc.perform(get("/ledger/whoami")
+                        .with(jwt().jwt(jwt -> jwt.subject("ezzat").claim("tenant", "acme")))
+                        .header("X-GK-Permissions", "payments:read"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.fromHeaders.permissions.length()").value(1))
+                .andExpect(jsonPath("$.match").value(false));
     }
 }
