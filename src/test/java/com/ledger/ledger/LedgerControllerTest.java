@@ -4,10 +4,14 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -52,5 +56,57 @@ class LedgerControllerTest {
                         .with(jwt().jwt(jwt -> jwt.subject("authcore-machine"))))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    void refusesAWriteWithoutTheRequiredPermission() throws Exception {
+        mockMvc.perform(post("/ledger/entries")
+                        .with(jwt().jwt(jwt -> jwt.subject("ezzat").claim("tenant", "acme"))
+                                  .authorities(new SimpleGrantedAuthority("payments:read")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"reference":"LDG-2001","amount":"10.00","currency":"EGP"}
+                                """))
+                .andExpect(status().isForbidden());
+    }
+
+    /**
+     * Rebuilds the context afterwards. LedgerRepository is a singleton holding mutable
+     * state, and every test class here shares one cached context because their
+     * {@code @SpringBootTest} configuration is identical — so the entry this test adds
+     * would otherwise still be there when {@code returnsOnlyTheCallersOwnTenantsEntries}
+     * asserts that the acme tenant has exactly two. JUnit's method order is deterministic
+     * but arbitrary, so that would fail unpredictably rather than never or always.
+     */
+    @DirtiesContext(methodMode = DirtiesContext.MethodMode.AFTER_METHOD)
+    @Test
+    void allowsAWriteWithTheRequiredPermission() throws Exception {
+        mockMvc.perform(post("/ledger/entries")
+                        .with(jwt().jwt(jwt -> jwt.subject("ezzat").claim("tenant", "acme"))
+                                  .authorities(new SimpleGrantedAuthority("payments:write")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"reference":"LDG-2001","amount":"10.00","currency":"EGP"}
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.reference").value("LDG-2001"))
+                .andExpect(jsonPath("$.tenant").value("acme"));
+    }
+
+    /**
+     * A client-credentials token carries the authority but no tenant. Storing its write
+     * would produce a row that is unreadable by everyone including itself, because reads
+     * are tenant-scoped — so the write is refused rather than silently swallowed.
+     */
+    @Test
+    void refusesAWriteFromATokenWithNoTenantClaim() throws Exception {
+        mockMvc.perform(post("/ledger/entries")
+                        .with(jwt().jwt(jwt -> jwt.subject("authcore-machine"))
+                                  .authorities(new SimpleGrantedAuthority("payments:write")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"reference":"LDG-ORPHAN","amount":"500.00","currency":"EGP"}
+                                """))
+                .andExpect(status().isForbidden());
     }
 }
