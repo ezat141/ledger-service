@@ -4,7 +4,7 @@ A Spring Boot resource server holding ledger data — journal entries with a ref
 
 GateKeeper does not exist yet. There is no gateway running anywhere in this platform today, and that isn't a gap this README is glossing over — it's the reason this service is built the way it is.
 
-The one idea worth understanding before anything else here: **ledger-service verifies AuthCore's JWTs itself, and it never trusts the gateway.** Point `curl` at `:8082` directly, skipping GateKeeper entirely — unavoidable right now, since GateKeeper isn't built — and the service is exactly as secure as it would be behind ten gateways. It reads the `X-GK-Subject`, `X-GK-Tenant`, and `X-GK-Permissions` headers GateKeeper's design says it will stamp, and one endpoint even reports them back for inspection, but nothing here is ever authorized on their say-so. They are informational. Every other decision in this service — what a caller can read, what they can write, what counts as proof of identity — follows from that one sentence.
+The one idea worth understanding before anything else here: **ledger-service verifies AuthCore's JWTs itself, and it never trusts the gateway.** Point `curl` at `:8082` directly, skipping GateKeeper entirely — unavoidable right now, since GateKeeper isn't built — and the service is exactly as secure as it would be behind ten gateways. It reads the `X-GK-Subject`, `X-GK-Tenant`, and `X-GK-Permissions` headers GateKeeper's design says it will stamp, and one endpoint — [`GET /ledger/whoami`](#the-whoami-walkthrough) — even reports them back for inspection, but nothing here is ever authorized on their say-so. They are informational. Every other decision in this service — what a caller can read, what they can write, what counts as proof of identity — follows from that one sentence.
 
 **Stack:** Java 21 · Spring Boot 4.1 · Spring Security OAuth2 Resource Server · in-memory storage
 
@@ -27,7 +27,7 @@ The one idea worth understanding before anything else here: **ledger-service ver
 
 | Service | Owns |
 |---|---|
-| **AuthCore** `:8080` | Authenticating users, issuing and signing JWTs, publishing JWKS |
+| [**AuthCore**](https://github.com/ezat141/authcore) `:8080` | Authenticating users, issuing and signing JWTs, publishing JWKS |
 | **GateKeeper** `:8081` — *not built* | Routing, rate limiting, edge rejection — a coarse first layer |
 | **ledger-service** `:8082` — this repo | Owning ledger data, and enforcing fine-grained authorization over it |
 
@@ -44,7 +44,7 @@ graph LR
     AuthCore -. JWKS .-> Ledger
 ```
 
-The bottom row of the table and the dashed arrow in the diagram are the same point twice. ledger-service does not ask an upstream layer "did you already decide this?" — there's no channel for that question, and nothing here would trust the answer if there were. It re-verifies the token's signature against AuthCore's published keys, re-derives the caller's tenant and permissions from the token's own claims, and re-checks both on every request, independent of whatever a gateway in front of it may already have concluded.
+The bottom row of the table and the dashed arrow in the diagram make the same point twice. ledger-service does not ask an upstream layer "did you already decide this?" — there's no channel for that question, and nothing here would trust the answer if there were. It re-verifies the token's signature against AuthCore's published keys, re-derives the caller's tenant and permissions from the token's own claims, and re-checks both on every request, independent of whatever a gateway in front of it may already have concluded.
 
 ---
 
@@ -155,7 +155,9 @@ X-GK-Permissions: payments:read,payments:write,admin:all
 {"fromToken":{"subject":"ezzat","tenant":"acme","permissions":["payments:read"]},"fromHeaders":{"subject":"ezzat","tenant":"acme","permissions":["payments:read","payments:write","admin:all"]},"match":false}
 ```
 
-This third case is why `match` compares subject, tenant, **and** permissions, instead of stopping at the first two. Subject and tenant agree here — a comparison that stopped there would report `match: true` on a request whose headers claim `admin:all` while the token grants nothing of the sort. That would be exactly backwards on the one endpoint that exists to prove headers aren't authoritative: it would teach the opposite lesson. Permissions are compared as **sets**, not lists — `X-GK-Permissions` is a comma-joined string with no meaningful order, so the same permissions arriving in a different sequence still have to count as a match, which a dedicated test pins down.
+This third case is why `match` compares subject, tenant, **and** permissions, instead of stopping at the first two. Subject and tenant agree here — a comparison that stopped there would report `match: true` on a request whose headers claim `admin:all` while the token grants nothing of the sort. That would be exactly backwards on the one endpoint that exists to prove headers aren't authoritative: it would teach the opposite lesson.
+
+Permissions are compared as **sets**, not lists — `X-GK-Permissions` is a comma-joined string with no meaningful order, so the same permissions arriving in a different sequence still have to count as a match, which a dedicated test pins down.
 
 `match: false` has two different causes, and the response body is how you tell them apart:
 
@@ -227,4 +229,6 @@ Honest about what this demo does not do:
 
 ## Why a servlet, not reactive
 
-Spring MVC on a blocking Tomcat, not WebFlux. This is an ordinary CRUD-shaped microservice with no high-fan-out I/O to justify a reactive stack, and reaching for one anyway would add a second programming model to hold in your head — `Mono`/`Flux`, non-blocking security context propagation — without demonstrating anything that GateKeeper, an actual I/O-bound gateway, won't already demonstrate better once it exists.
+Spring MVC on a blocking Tomcat, not WebFlux. This is an ordinary CRUD-shaped microservice — one lookup against an in-memory list per request — with no high-fan-out I/O to justify a reactive stack.
+
+Reaching for one anyway means trading a familiar programming model for a harder one: handlers return `Mono`/`Flux` instead of plain values, and the security context — normally just read off the current thread — has to be propagated explicitly, because reactive code hops threads and the usual `ThreadLocal` mechanism stops working. That trade earns its keep in a component genuinely bottlenecked on concurrent I/O. GateKeeper is exactly that component, and it will demonstrate the reactive model far better than a service doing one in-memory lookup ever could.
