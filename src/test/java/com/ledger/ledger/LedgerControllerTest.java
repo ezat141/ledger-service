@@ -92,4 +92,21 @@ class LedgerControllerTest {
                 .andExpect(jsonPath("$.reference").value("LDG-2001"))
                 .andExpect(jsonPath("$.tenant").value("acme"));
     }
+
+    /**
+     * A client-credentials token carries the authority but no tenant. Storing its write
+     * would produce a row that is unreadable by everyone including itself, because reads
+     * are tenant-scoped — so the write is refused rather than silently swallowed.
+     */
+    @Test
+    void refusesAWriteFromATokenWithNoTenantClaim() throws Exception {
+        mockMvc.perform(post("/ledger/entries")
+                        .with(jwt().jwt(jwt -> jwt.subject("authcore-machine"))
+                                  .authorities(new SimpleGrantedAuthority("payments:write")))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"reference":"LDG-ORPHAN","amount":"500.00","currency":"EGP"}
+                                """))
+                .andExpect(status().isForbidden());
+    }
 }
