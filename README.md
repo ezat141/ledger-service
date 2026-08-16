@@ -1,10 +1,10 @@
 # ledger-service
 
-A Spring Boot resource server holding ledger data — journal entries with a reference, a tenant, an amount, and a currency. It is the third service in a small OAuth2 platform built to be opened and prodded by a hiring interviewer: **AuthCore** (`:8080`) issues the tokens, **GateKeeper** (`:8081`) is the platform's planned zero-trust edge, and this service (`:8082`) owns the ledger data and decides, on every request, whether the caller may see or change it.
+A Spring Boot resource server holding ledger data — journal entries with a reference, a tenant, an amount, and a currency. It is the third service in a small OAuth2 platform built to be opened and prodded by a hiring interviewer: **AuthCore** (`:8080`) issues the tokens, [**GateKeeper**](https://github.com/ezat141/gatekeeper) (`:8081`) is the platform's zero-trust edge, and this service (`:8082`) owns the ledger data and decides, on every request, whether the caller may see or change it.
 
-GateKeeper does not exist yet. There is no gateway running anywhere in this platform today, and that isn't a gap this README is glossing over — it's the reason this service is built the way it is.
+GateKeeper exists now, and this service still does not trust it. That is not caution left over from when the gateway was unbuilt — it is the design, and it is why every identity decision here is made twice.
 
-The one idea worth understanding before anything else here: **ledger-service verifies AuthCore's JWTs itself, and it never trusts the gateway.** Point `curl` at `:8082` directly, skipping GateKeeper entirely — unavoidable right now, since GateKeeper isn't built — and the service is exactly as secure as it would be behind ten gateways. It reads the `X-GK-Subject`, `X-GK-Tenant`, and `X-GK-Permissions` headers GateKeeper's design says it will stamp, and one endpoint — [`GET /ledger/whoami`](#the-whoami-walkthrough) — even reports them back for inspection, but nothing here is ever authorized on their say-so. They are informational. Every other decision in this service — what a caller can read, what they can write, what counts as proof of identity — follows from that one sentence.
+The one idea worth understanding before anything else here: **ledger-service verifies AuthCore's JWTs itself, and it never trusts the gateway.** Point `curl` at `:8082` directly, skipping GateKeeper entirely, and the service is exactly as secure as it would be behind ten gateways. It reads the `X-GK-Subject`, `X-GK-Tenant`, and `X-GK-Permissions` headers GateKeeper stamps, and one endpoint — [`GET /ledger/whoami`](#the-whoami-walkthrough) — even reports them back for inspection, but nothing here is ever authorized on their say-so. They are informational. Every other decision in this service — what a caller can read, what they can write, what counts as proof of identity — follows from that one sentence.
 
 **Stack:** Java 21 · Spring Boot 4.1 · Spring Security OAuth2 Resource Server · in-memory storage
 
@@ -28,14 +28,14 @@ The one idea worth understanding before anything else here: **ledger-service ver
 | Service | Owns |
 |---|---|
 | [**AuthCore**](https://github.com/ezat141/authcore) `:8080` | Authenticating users, issuing and signing JWTs, publishing JWKS |
-| **GateKeeper** `:8081` — *not built* | Routing, rate limiting, edge rejection — a coarse first layer |
+| [**GateKeeper**](https://github.com/ezat141/gatekeeper) `:8081` | Routing, edge rejection, identity propagation — a coarse first layer |
 | **ledger-service** `:8082` — this repo | Owning ledger data, and enforcing fine-grained authorization over it |
 
 ```mermaid
 graph LR
     Caller["Caller"]
     AuthCore["AuthCore :8080<br/>issues JWTs, publishes JWKS"]
-    GateKeeper["GateKeeper :8081<br/>not built"]
+    GateKeeper["GateKeeper :8081<br/>strips inbound X-GK-*, stamps verified"]
     Ledger["ledger-service :8082<br/>this repo"]
 
     Caller -->|bearer JWT| GateKeeper
@@ -126,9 +126,9 @@ Authorization: Bearer <token, sub=ezzat, tenant=acme>
 
 No `X-GK-*` header arrived, because nothing sent one. `fromHeaders` comes back empty and `match` is `false`.
 
-### 2. What a gateway would send, added by hand
+### 2. What the gateway sends
 
-GateKeeper isn't built, so today the only way to see this shape is to attach the headers its design says it will stamp:
+Routed through GateKeeper on `:8081`, these headers arrive stamped from the verified token. Attaching them by hand against `:8082` produces the identical shape, and is the quickest way to see it without starting the gateway:
 
 ```
 GET /ledger/whoami
@@ -231,4 +231,4 @@ Honest about what this demo does not do:
 
 Spring MVC on a blocking Tomcat, not WebFlux. This is an ordinary CRUD-shaped microservice — one lookup against an in-memory list per request — with no high-fan-out I/O to justify a reactive stack.
 
-Reaching for one anyway means trading a familiar programming model for a harder one: handlers return `Mono`/`Flux` instead of plain values, and the security context — normally just read off the current thread — has to be propagated explicitly, because reactive code hops threads and the usual `ThreadLocal` mechanism stops working. That trade earns its keep in a component genuinely bottlenecked on concurrent I/O. GateKeeper is exactly that component, and it will demonstrate the reactive model far better than a service doing one in-memory lookup ever could.
+Reaching for one anyway means trading a familiar programming model for a harder one: handlers return `Mono`/`Flux` instead of plain values, and the security context — normally just read off the current thread — has to be propagated explicitly, because reactive code hops threads and the usual `ThreadLocal` mechanism stops working. That trade earns its keep in a component genuinely bottlenecked on concurrent I/O. GateKeeper is exactly that component — it holds many mostly-idle connections and does almost no per-request CPU work — so it runs on Netty, and [its README argues the other half of this](https://github.com/ezat141/gatekeeper#why-reactive-here-when-ledger-service-is-not). Two services, two stacks, one decision made twice on its merits rather than once out of habit.
