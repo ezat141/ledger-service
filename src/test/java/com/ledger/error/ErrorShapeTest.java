@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
@@ -14,6 +15,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -61,7 +63,11 @@ class ErrorShapeTest {
                 .andExpect(jsonPath("$.error").value("forbidden"))
                 .andExpect(jsonPath("$.status").value(403))
                 .andExpect(jsonPath("$.detail")
-                        .value("the token does not carry the permission this operation requires"));
+                        .value("the token does not carry the permission this operation requires"))
+                // Asserted on both 403 branches, not just the tenant one, so a header added
+                // to a single branch later cannot slip through. A 403 means the caller was
+                // identified and refused; offering a way to authenticate would be nonsense.
+                .andExpect(header().doesNotExist(HttpHeaders.WWW_AUTHENTICATE));
     }
 
     /**
