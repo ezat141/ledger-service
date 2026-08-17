@@ -1,7 +1,6 @@
 package com.ledger.ledger;
 
 import org.springframework.http.HttpStatus;
-import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -54,7 +53,11 @@ public class LedgerController {
             // write would store a row no caller can ever read back — not even this one,
             // since reads are tenant-scoped. Refusing is the honest answer, and it
             // matches how the read path already treats a missing tenant.
-            throw new AccessDeniedException("a tenant claim is required to write a ledger entry");
+            //
+            // TenantRequiredException rather than plain AccessDeniedException: it lets
+            // JsonAccessDeniedHandler describe this refusal honestly, as distinct from one
+            // caused by a missing permission (see that class for why the distinction matters).
+            throw new TenantRequiredException("a tenant claim is required to write a ledger entry");
         }
 
         return repository.add(new LedgerEntry(
